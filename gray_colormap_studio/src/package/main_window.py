@@ -397,12 +397,10 @@ class MainWindow(QMainWindow):
             origin=self.origin_combo.currentText(),
             aspect=self.aspect_combo.currentText(),
         )
-        self._preview_full_xlim = tuple(
-            float(value) for value in self.preview_axes.get_xlim()
-        )
-        self._preview_full_ylim = tuple(
-            float(value) for value in self.preview_axes.get_ylim()
-        )
+        image_xlim = self.preview_axes.get_xlim()
+        image_ylim = self.preview_axes.get_ylim()
+        self._preview_full_xlim = (float(image_xlim[0]), float(image_xlim[1]))
+        self._preview_full_ylim = (float(image_ylim[0]), float(image_ylim[1]))
         if self.contour_check.isChecked() and self.contour_level is not None:
             if float(finite.min()) < self.contour_level < float(finite.max()):
                 self.preview_axes.contour(
@@ -514,6 +512,7 @@ class MainWindow(QMainWindow):
             self.histogram_span.disconnect_events()
         self.histogram_axes.clear()
         self.histogram_contour_line = None
+        self.histogram_cursor_line = None
         self.histogram_span = SpanSelector(
             self.histogram_axes,
             self._on_histogram_range_selected,
@@ -562,6 +561,9 @@ class MainWindow(QMainWindow):
 
     def _draw_histogram_contour_level(self) -> None:
         """選択中の等輝度線レベルをヒストグラム上に表示する。"""
+        legend = self.histogram_axes.get_legend()
+        if legend is not None:
+            legend.remove()
         if self.histogram_contour_line is not None:
             try:
                 self.histogram_contour_line.remove()
@@ -659,6 +661,7 @@ class MainWindow(QMainWindow):
             self.histogram_span = None
         self.histogram_axes.clear()
         self.histogram_contour_line = None
+        self.histogram_cursor_line = None
         self.histogram_axes.set_title("Pixel histogram")
         self.histogram_edges = None
         self.histogram_counts = None
