@@ -50,6 +50,7 @@ class MainWindow(QMainWindow):
         self.histogram_counts: np.ndarray | None = None
         self.histogram_cursor_line = None
         self.histogram_span: SpanSelector | None = None
+        self._histogram_press_x: float | None = None
         self.display_min: float | None = None
         self.display_max: float | None = None
         self.contour_level: float | None = None
@@ -153,7 +154,10 @@ class MainWindow(QMainWindow):
             "motion_notify_event", self._on_histogram_motion
         )
         self.histogram_canvas.mpl_connect(
-            "button_press_event", self._on_histogram_click
+            "button_press_event", self._on_histogram_press
+        )
+        self.histogram_canvas.mpl_connect(
+            "button_release_event", self._on_histogram_release
         )
         self.histogram_span = SpanSelector(
             self.histogram_axes,
@@ -409,8 +413,6 @@ class MainWindow(QMainWindow):
         self.histogram_cursor_line = self.histogram_axes.axvline(
             centers[0], visible=False, linewidth=1, color="tab:orange"
         )
-        if self.histogram_span is not None:
-            self.histogram_span.clear()
         self.histogram_canvas.draw_idle()
         self.histogram_value_label.setText(
             f"値の範囲: {minimum:.6g} ～ {maximum:.6g} | 画素数: {values.size:,}"
@@ -447,16 +449,29 @@ class MainWindow(QMainWindow):
             f"表示輝度範囲を設定: {self.display_min:.8g} ～ {self.display_max:.8g}"
         )
 
-    def _on_histogram_click(self, event) -> None:
+    def _on_histogram_press(self, event) -> None:
         if (
-            event.inaxes is not self.histogram_axes
+            event.inaxes is self.histogram_axes
+            and event.x is not None
+            and event.button == 1
+        ):
+            self._histogram_press_x = float(event.x)
+
+    def _on_histogram_release(self, event) -> None:
+        if (
+            self._histogram_press_x is None
+            or event.inaxes is not self.histogram_axes
+            or event.x is None
             or event.xdata is None
             or event.button != 1
             or self.histogram_edges is None
         ):
+            self._histogram_press_x = None
             return
-        # SpanSelector のドラッグ終了イベントはクリックとして扱わない。
-        if getattr(event, "dblclick", False):
+        pixel_distance = abs(float(event.x) - self._histogram_press_x)
+        self._histogram_press_x = None
+        # ドラッグ操作は SpanSelector が処理するため、短いクリックのみ等輝度線にする。
+        if pixel_distance > 4:
             return
         self.contour_level = float(event.xdata)
         self._render_selected_image()
@@ -514,7 +529,8 @@ class MainWindow(QMainWindow):
                     gray = load_grayscale(path)
                 lower = self.display_min
                 upper = self.display_max
-                if path != Path(self.file_list.currentItem().text()) if self.file_list.currentItem() else True:
+                current_item = self.file_list.currentItem()
+                if current_item is None or path != Path(current_item.text()):
                     lower = upper = None
                 finite = gray[np.isfinite(gray)]
                 vmin = lower if lower is not None else float(finite.min())
