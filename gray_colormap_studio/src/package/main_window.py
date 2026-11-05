@@ -381,7 +381,18 @@ class MainWindow(QMainWindow):
     def _update_histogram(self, gray: np.ndarray) -> None:
         values = np.asarray(gray).reshape(-1)
         values = values[np.isfinite(values)]
+        if self.histogram_span is not None:
+            self.histogram_span.disconnect_events()
         self.histogram_axes.clear()
+        self.histogram_span = SpanSelector(
+            self.histogram_axes,
+            self._on_histogram_range_selected,
+            "horizontal",
+            useblit=True,
+            props={"alpha": 0.22, "facecolor": "tab:orange"},
+            interactive=True,
+            drag_from_anywhere=True,
+        )
         self.histogram_edges = None
         self.histogram_counts = None
         if values.size == 0:
