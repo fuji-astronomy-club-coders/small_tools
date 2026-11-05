@@ -297,6 +297,11 @@ class MainWindow(QMainWindow):
             self.gray_cache.pop(path, None)
             self.file_list.takeItem(row)
         if not self.paths:
+            self._preview_full_xlim = None
+            self._preview_full_ylim = None
+            self.zoom_factor = 1.0
+            self.zoom_center = None
+            self.zoom_value_label.setText("100%")
             self.preview_axes.clear()
             self.preview_canvas.draw_idle()
             self.preview_title.setText("画像を選択してください")
