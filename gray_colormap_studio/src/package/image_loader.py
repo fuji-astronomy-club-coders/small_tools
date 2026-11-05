@@ -47,7 +47,15 @@ def load_image(image_path: str | Path) -> np.ndarray:
         raise ValueError(f"画像の読み込みに失敗しました: {path}")
 
     array = np.asarray(image)
-    array = np.squeeze(array)
+    # FITS の (1, 高さ, 幅) 形式は単一フレームとして扱う。
+    # 2D の (1, 幅) のような細長い画像は squeeze せず、その形を保持する。
+    if (
+        array.ndim == 3
+        and array.shape[0] == 1
+        and array.shape[-1] not in (1, 3, 4)
+    ):
+        array = array[0]
+
     if array.size == 0:
         raise ValueError(f"画像データが空です: {path}")
     if array.ndim not in (2, 3):
@@ -58,10 +66,15 @@ def load_image(image_path: str | Path) -> np.ndarray:
     if array.ndim == 3 and array.shape[-1] not in (1, 3, 4):
         raise ValueError(f"対応していないチャンネル数です: {array.shape}")
 
-    if not (np.issubdtype(array.dtype, np.number) or np.issubdtype(array.dtype, np.bool_)):
+    if not (
+        np.issubdtype(array.dtype, np.number)
+        or np.issubdtype(array.dtype, np.bool_)
+    ):
         raise ValueError(f"数値画像ではありません: {path}")
 
     if np.issubdtype(array.dtype, np.floating):
-        array = np.nan_to_num(array, copy=True, nan=0.0, posinf=0.0, neginf=0.0)
+        array = np.nan_to_num(
+            array, copy=True, nan=0.0, posinf=0.0, neginf=0.0
+        )
 
     return array
