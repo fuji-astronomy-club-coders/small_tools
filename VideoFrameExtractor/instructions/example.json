@@ -1,0 +1,25 @@
+{
+  "tasks": [
+    {
+      "source": "videos/solar_001.ser",
+      "format": "ser",
+      "frame": 120,
+      "output_dir": "output/ser",
+      "filename": "solar_frame_00120.tiff"
+    },
+    {
+      "source": "videos/capture.avi",
+      "format": "avi",
+      "frame": 350,
+      "output_dir": "output/avi",
+      "filename": "capture_frame_00350.tif"
+    },
+    {
+      "source": "videos/capture.avi",
+      "format": "avi",
+      "frame": 720,
+      "output_dir": "output/avi",
+      "filename": "capture_frame_00720.tif"
+    }
+  ]
+}

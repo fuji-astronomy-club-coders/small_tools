@@ -1,0 +1,7 @@
+{
+  "log_dir": "logs",
+  "temp_dir": "temp",
+  "log_level": "INFO",
+  "overwrite": false,
+  "ser_endian_mode": "legacy"
+}
