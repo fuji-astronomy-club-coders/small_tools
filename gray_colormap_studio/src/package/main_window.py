@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QProgressDialog,
     QPushButton,
     QSplitter,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -54,6 +55,11 @@ class MainWindow(QMainWindow):
         self.display_min: float | None = None
         self.display_max: float | None = None
         self.contour_level: float | None = None
+        self.histogram_contour_line = None
+        self.zoom_factor = 1.0
+        self.zoom_center: tuple[float, float] | None = None
+        self._preview_full_xlim: tuple[float, float] | None = None
+        self._preview_full_ylim: tuple[float, float] | None = None
         self._building_controls = False
         self._build_ui()
 
@@ -86,7 +92,18 @@ class MainWindow(QMainWindow):
         right = QWidget()
         right_layout = QVBoxLayout(right)
 
-        controls = QGroupBox("Matplotlib 表示・画像オペレーション")
+        self.operation_header = QToolButton()
+        self.operation_header.setText("Matplotlib 表示・画像オペレーション")
+        self.operation_header.setCheckable(True)
+        self.operation_header.setChecked(True)
+        self.operation_header.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        self.operation_header.setArrowType(Qt.ArrowType.DownArrow)
+        right_layout.addWidget(self.operation_header)
+
+        controls = QGroupBox()
+        self.operations_panel = controls
         form = QFormLayout(controls)
         self.cmap_combo = QComboBox()
         self.cmap_combo.addItems(available_colormaps())
@@ -110,6 +127,17 @@ class MainWindow(QMainWindow):
             spin.setDecimals(8)
             spin.setKeyboardTracking(False)
         self.reset_range_button = QPushButton("輝度範囲を全体に戻す")
+        self.zoom_in_button = QPushButton("＋ 拡大")
+        self.zoom_out_button = QPushButton("－ 縮小")
+        self.zoom_reset_button = QPushButton("全体表示")
+        self.zoom_value_label = QLabel("100%")
+        zoom_row = QWidget()
+        zoom_layout = QHBoxLayout(zoom_row)
+        zoom_layout.setContentsMargins(0, 0, 0, 0)
+        zoom_layout.addWidget(self.zoom_in_button)
+        zoom_layout.addWidget(self.zoom_out_button)
+        zoom_layout.addWidget(self.zoom_reset_button)
+        zoom_layout.addWidget(self.zoom_value_label)
         self.clear_contour_button = QPushButton("等輝度線を解除")
         self.output_label = QLabel("未選択（元画像の隣に保存）")
         self.output_label.setWordWrap(True)
@@ -125,12 +153,14 @@ class MainWindow(QMainWindow):
         form.addRow("表示下限 (vmin)", self.vmin_spin)
         form.addRow("表示上限 (vmax)", self.vmax_spin)
         form.addRow(self.reset_range_button)
+        form.addRow("画像ズーム", zoom_row)
         form.addRow(self.contour_check)
         form.addRow(self.clear_contour_button)
         form.addRow("出力先", self.output_label)
         form.addRow(self.output_button)
         form.addRow(self.save_selected_button, self.save_all_button)
         right_layout.addWidget(controls)
+        self.operation_header.toggled.connect(self._toggle_operations)
 
         self.preview_title = QLabel("画像を選択してください")
         self.preview_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -139,6 +169,7 @@ class MainWindow(QMainWindow):
         self.preview_axes = self.preview_figure.add_subplot(111)
         self.preview_canvas = FigureCanvasQTAgg(self.preview_figure)
         self.preview_canvas.setMinimumHeight(320)
+        self.preview_canvas.mpl_connect("scroll_event", self._on_preview_scroll)
         right_layout.addWidget(self.preview_canvas, 4)
 
         self.histogram_title = QLabel(
@@ -196,6 +227,9 @@ class MainWindow(QMainWindow):
         self.vmin_spin.valueChanged.connect(self._range_spin_changed)
         self.vmax_spin.valueChanged.connect(self._range_spin_changed)
         self.reset_range_button.clicked.connect(self._reset_display_range)
+        self.zoom_in_button.clicked.connect(self._zoom_in)
+        self.zoom_out_button.clicked.connect(self._zoom_out)
+        self.zoom_reset_button.clicked.connect(self._reset_zoom)
         self.clear_contour_button.clicked.connect(self._clear_contour)
         self.output_button.clicked.connect(self.choose_output_dir)
         self.save_selected_button.clicked.connect(
@@ -205,6 +239,13 @@ class MainWindow(QMainWindow):
             lambda: self.save_images(selected_only=False)
         )
         self._clear_histogram()
+
+    def _toggle_operations(self, expanded: bool) -> None:
+        """画像オペレーション欄の表示・非表示を切り替える。"""
+        self.operations_panel.setVisible(expanded)
+        self.operation_header.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        )
 
     def _current_gray(self) -> np.ndarray | None:
         item = self.file_list.currentItem()
@@ -274,6 +315,8 @@ class MainWindow(QMainWindow):
             self.gray_cache[path] = load_grayscale(path)
             self.display_min = self.display_max = None
             self.contour_level = None
+            self.zoom_factor = 1.0
+            self.zoom_center = None
             self.update_preview()
         except Exception as exc:
             QMessageBox.critical(self, "再読み込みエラー", f"{path}\n{exc}")
@@ -287,6 +330,8 @@ class MainWindow(QMainWindow):
     def update_preview(self, *_args) -> None:
         self.display_min = self.display_max = None
         self.contour_level = None
+        self.zoom_factor = 1.0
+        self.zoom_center = None
         gray = self._current_gray()
         if gray is None:
             return
@@ -352,6 +397,12 @@ class MainWindow(QMainWindow):
             origin=self.origin_combo.currentText(),
             aspect=self.aspect_combo.currentText(),
         )
+        self._preview_full_xlim = tuple(
+            float(value) for value in self.preview_axes.get_xlim()
+        )
+        self._preview_full_ylim = tuple(
+            float(value) for value in self.preview_axes.get_ylim()
+        )
         if self.contour_check.isChecked() and self.contour_level is not None:
             if float(finite.min()) < self.contour_level < float(finite.max()):
                 self.preview_axes.contour(
@@ -366,6 +417,7 @@ class MainWindow(QMainWindow):
         self.preview_axes.set_ylabel("Y (pixel)")
         if self.colorbar_check.isChecked():
             self.preview_figure.colorbar(image, ax=self.preview_axes, label="Intensity")
+        self._apply_preview_zoom()
         self.preview_canvas.draw_idle()
         self.preview_title.setText(
             f"{Path(item.text()).name} | {gray.shape[1]} × {gray.shape[0]} px | "
@@ -378,12 +430,90 @@ class MainWindow(QMainWindow):
         )
         self.status_label.setText(f"プレビュー中: {Path(item.text()).name}")
 
+    def _zoom_in(self) -> None:
+        """表示倍率を上げる。"""
+        self.zoom_factor = min(self.zoom_factor * 1.25, 32.0)
+        self._apply_preview_zoom()
+
+    def _zoom_out(self) -> None:
+        """表示倍率を下げる。"""
+        self.zoom_factor = max(self.zoom_factor / 1.25, 1.0)
+        if self.zoom_factor == 1.0:
+            self.zoom_center = None
+        self._apply_preview_zoom()
+
+    def _reset_zoom(self) -> None:
+        """画像全体が収まる表示倍率に戻す。"""
+        self.zoom_factor = 1.0
+        self.zoom_center = None
+        self._apply_preview_zoom()
+
+    def _on_preview_scroll(self, event) -> None:
+        """マウスホイールでカーソル位置を中心に拡大・縮小する。"""
+        if (
+            event.inaxes is not self.preview_axes
+            or event.xdata is None
+            or event.ydata is None
+        ):
+            return
+        if event.button == "up":
+            self.zoom_factor = min(self.zoom_factor * 1.2, 32.0)
+        elif event.button == "down":
+            self.zoom_factor = max(self.zoom_factor / 1.2, 1.0)
+        else:
+            return
+        self.zoom_center = (float(event.xdata), float(event.ydata))
+        if self.zoom_factor == 1.0:
+            self.zoom_center = None
+        self._apply_preview_zoom()
+
+    def _apply_preview_zoom(self) -> None:
+        """画像の全体範囲と倍率から表示領域を設定する。"""
+        if self._preview_full_xlim is None or self._preview_full_ylim is None:
+            return
+
+        x_start, x_end = self._preview_full_xlim
+        y_start, y_end = self._preview_full_ylim
+        x_lower, x_upper = min(x_start, x_end), max(x_start, x_end)
+        y_lower, y_upper = min(y_start, y_end), max(y_start, y_end)
+        if self.zoom_center is None:
+            center_x = (x_lower + x_upper) / 2
+            center_y = (y_lower + y_upper) / 2
+        else:
+            center_x, center_y = self.zoom_center
+
+        half_width = (x_upper - x_lower) / (2 * self.zoom_factor)
+        half_height = (y_upper - y_lower) / (2 * self.zoom_factor)
+        center_x = min(max(center_x, x_lower + half_width), x_upper - half_width)
+        center_y = min(max(center_y, y_lower + half_height), y_upper - half_height)
+
+        if x_start <= x_end:
+            self.preview_axes.set_xlim(
+                center_x - half_width, center_x + half_width
+            )
+        else:
+            self.preview_axes.set_xlim(
+                center_x + half_width, center_x - half_width
+            )
+        if y_start <= y_end:
+            self.preview_axes.set_ylim(
+                center_y - half_height, center_y + half_height
+            )
+        else:
+            self.preview_axes.set_ylim(
+                center_y + half_height, center_y - half_height
+            )
+
+        self.zoom_value_label.setText(f"{self.zoom_factor * 100:.0f}%")
+        self.preview_canvas.draw_idle()
+
     def _update_histogram(self, gray: np.ndarray) -> None:
         values = np.asarray(gray).reshape(-1)
         values = values[np.isfinite(values)]
         if self.histogram_span is not None:
             self.histogram_span.disconnect_events()
         self.histogram_axes.clear()
+        self.histogram_contour_line = None
         self.histogram_span = SpanSelector(
             self.histogram_axes,
             self._on_histogram_range_selected,
@@ -424,10 +554,35 @@ class MainWindow(QMainWindow):
         self.histogram_cursor_line = self.histogram_axes.axvline(
             centers[0], visible=False, linewidth=1, color="tab:orange"
         )
+        self._draw_histogram_contour_level()
         self.histogram_canvas.draw_idle()
         self.histogram_value_label.setText(
             f"値の範囲: {minimum:.6g} ～ {maximum:.6g} | 画素数: {values.size:,}"
         )
+
+    def _draw_histogram_contour_level(self) -> None:
+        """選択中の等輝度線レベルをヒストグラム上に表示する。"""
+        if self.histogram_contour_line is not None:
+            try:
+                self.histogram_contour_line.remove()
+            except ValueError:
+                pass
+            self.histogram_contour_line = None
+
+        if self.contour_level is None or self.histogram_edges is None:
+            return
+        lower, upper = float(self.histogram_edges[0]), float(self.histogram_edges[-1])
+        if not lower <= self.contour_level <= upper:
+            return
+        self.histogram_contour_line = self.histogram_axes.axvline(
+            self.contour_level,
+            color="tab:red",
+            linestyle="--",
+            linewidth=1.6,
+            label=f"等輝度線: {self.contour_level:.6g}",
+            zorder=5,
+        )
+        self.histogram_axes.legend(loc="upper right", fontsize="small")
 
     def _on_histogram_motion(self, event) -> None:
         if (
@@ -485,6 +640,8 @@ class MainWindow(QMainWindow):
         if pixel_distance > 4:
             return
         self.contour_level = float(event.xdata)
+        self._draw_histogram_contour_level()
+        self.histogram_canvas.draw_idle()
         self._render_selected_image()
         self.histogram_value_label.setText(
             f"等輝度線を設定: {self.contour_level:.8g}"
@@ -492,10 +649,16 @@ class MainWindow(QMainWindow):
 
     def _clear_contour(self) -> None:
         self.contour_level = None
+        self._draw_histogram_contour_level()
+        self.histogram_canvas.draw_idle()
         self._render_selected_image()
 
     def _clear_histogram(self) -> None:
+        if self.histogram_span is not None:
+            self.histogram_span.disconnect_events()
+            self.histogram_span = None
         self.histogram_axes.clear()
+        self.histogram_contour_line = None
         self.histogram_axes.set_title("Pixel histogram")
         self.histogram_edges = None
         self.histogram_counts = None
