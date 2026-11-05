@@ -42,6 +42,17 @@ class ImageLoaderTests(unittest.TestCase):
 
         np.testing.assert_array_equal(actual, expected)
 
+    def test_loads_singleton_frame_without_collapsing_2d_shapes(self) -> None:
+        expected = np.array([[7, 11, 13, 17]], dtype=np.uint16)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "single-row.fits"
+            fits.PrimaryHDU(data=expected).writeto(path)
+
+            actual = load_image(path)
+
+        self.assertEqual(actual.shape, (1, 4))
+        np.testing.assert_array_equal(actual, expected)
+
     def test_grayscale_conversion_keeps_uint16_values(self) -> None:
         expected = np.array([[10, 1000], [30000, 60000]], dtype=np.uint16)
         with tempfile.TemporaryDirectory() as directory:
